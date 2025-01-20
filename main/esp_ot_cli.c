@@ -67,7 +67,7 @@ static led_strip_handle_t led_strip;
 static TimerHandle_t led_timer = NULL;
 
 #define TAG "ot_esp_cli"
-#define HEARTBEAT_DURATION_MS 20  // Configurable heartbeat duration in milliseconds
+#define HEARTBEAT_DURATION_MS 50  // Configurable heartbeat duration in milliseconds
 
 static otUdpSocket sHeartbeatSocket;
 
@@ -245,7 +245,7 @@ void heartbeat_task(void *arg)
 {
     otInstance *instance = esp_openthread_get_instance();
     TickType_t last_press_time = 0;
-    const TickType_t debounce_interval = pdMS_TO_TICKS(HEARTBEAT_DURATION_MS);
+    const TickType_t debounce_interval = pdMS_TO_TICKS(10);
 
     while (1) {
         // Debounce button press
@@ -262,7 +262,7 @@ void heartbeat_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_DURATION_MS));
         } else {
             // Not pressed
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_DURATION_MS));
         }
     }
 }
@@ -381,7 +381,7 @@ void led_init(void) {
     if (led_timer == NULL) {
         led_timer = xTimerCreate(
             "LED Timer",
-            pdMS_TO_TICKS(HEARTBEAT_DURATION_MS * 1.1), // 1.1 times the heartbeat duration
+            pdMS_TO_TICKS(HEARTBEAT_DURATION_MS * 2.1), // 1.1 times the heartbeat duration
             pdFALSE,            // Auto-reload disabled
             NULL,               // Timer ID not used
             led_timer_callback  // Timer callback function
