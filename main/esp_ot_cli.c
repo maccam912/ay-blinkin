@@ -43,22 +43,35 @@
 #include "openthread/udp.h"
 #include "openthread/ip6.h"
 #include "openthread/thread.h"
-
-#if CONFIG_OPENTHREAD_STATE_INDICATOR_ENABLE
-#include "ot_led_strip.h"
-#endif
+#include "led_strip.h"
 
 #if CONFIG_OPENTHREAD_CLI_ESP_EXTENSION
 #include "esp_ot_cli_extension.h"
 #endif // CONFIG_OPENTHREAD_CLI_ESP_EXTENSION
+
+// Function declarations
+void led_init(void);
+void handle_heartbeat_led(void);
+void led_timer_callback(TimerHandle_t timer);
+void init_udp_socket(otInstance *instance);
+void send_heartbeat(otInstance *instance);
+void button_init(void);
+void heartbeat_task(void *arg);
+esp_netif_t *init_openthread_netif(const esp_openthread_platform_config_t *config);
+void ot_task_worker(void *aContext);
+void app_main(void);
+void udp_receive_callback(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo);
+
+static const char *TAG = "ot-esp-cli";
+static led_strip_handle_t led_strip;
+static TimerHandle_t led_timer = NULL;
 
 #define TAG "ot_esp_cli"
 
 static otUdpSocket sHeartbeatSocket;
 
 // UDP receive callback
-static void udp_receive_callback(void *aContext, otMessage *aMessage,
-                               const otMessageInfo *aMessageInfo)
+void udp_receive_callback(void *aContext, otMessage *aMessage, const otMessageInfo *aMessageInfo)
 {
     if (aMessage == NULL || aMessageInfo == NULL) {
         ESP_LOGE(TAG, "Invalid UDP message received");
@@ -112,9 +125,12 @@ static void udp_receive_callback(void *aContext, otMessage *aMessage,
 
     buf[bytes_read] = '\0';  // Ensure null termination
     ESP_LOGI(TAG, "Received UDP message: %s", buf);
+    
+    // Trigger LED on heartbeat message
+    handle_heartbeat_led();
 }
 
-static void init_udp_socket(otInstance *instance)
+void init_udp_socket(otInstance *instance)
 {
     if (instance == NULL) {
         ESP_LOGE(TAG, "Invalid OpenThread instance");
@@ -142,7 +158,7 @@ static void init_udp_socket(otInstance *instance)
     ESP_LOGI(TAG, "UDP socket initialized successfully");
 }
 
-static void send_heartbeat(otInstance *instance)
+void send_heartbeat(otInstance *instance)
 {
     if (instance == NULL) {
         ESP_LOGE(TAG, "Invalid OpenThread instance");
@@ -228,10 +244,11 @@ static void send_heartbeat(otInstance *instance)
         otMessageFree(message);
     } else {
         ESP_LOGI(TAG, "Link-local heartbeat sent: %s", payload);
+        handle_heartbeat_led();
     }
 }
 
-static void button_init(void)
+void button_init(void)
 {
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << 9),
@@ -243,7 +260,7 @@ static void button_init(void)
     gpio_config(&io_conf);
 }
 
-static void heartbeat_task(void *arg)
+void heartbeat_task(void *arg)
 {
     otInstance *instance = esp_openthread_get_instance();
     TickType_t last_press_time = 0;
@@ -269,7 +286,7 @@ static void heartbeat_task(void *arg)
     }
 }
 
-static esp_netif_t *init_openthread_netif(const esp_openthread_platform_config_t *config)
+esp_netif_t *init_openthread_netif(const esp_openthread_platform_config_t *config)
 {
     esp_netif_config_t cfg = ESP_NETIF_DEFAULT_OPENTHREAD();
     esp_netif_t *netif = esp_netif_new(&cfg);
@@ -279,7 +296,7 @@ static esp_netif_t *init_openthread_netif(const esp_openthread_platform_config_t
     return netif;
 }
 
-static void ot_task_worker(void *aContext)
+void ot_task_worker(void *aContext)
 {
     esp_openthread_platform_config_t config = {
         .radio_config = ESP_OPENTHREAD_DEFAULT_RADIO_CONFIG(),
@@ -290,9 +307,7 @@ static void ot_task_worker(void *aContext)
     // Initialize the OpenThread stack
     ESP_ERROR_CHECK(esp_openthread_init(&config));
 
-#if CONFIG_OPENTHREAD_STATE_INDICATOR_ENABLE
-    ESP_ERROR_CHECK(esp_openthread_state_indicator_init(esp_openthread_get_instance()));
-#endif
+    // ESP_ERROR_CHECK(esp_openthread_state_indicator_init(esp_openthread_get_instance()));
 
 #if CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC
     // The OpenThread log level directly matches ESP log level
@@ -315,6 +330,7 @@ static void ot_task_worker(void *aContext)
     // after esp_openthread_init(&config) but before launch_mainloop
     button_init();
     init_udp_socket(esp_openthread_get_instance());
+    led_init();
 
     // Start the heartbeat task (slightly lower priority is usually fine)
     xTaskCreate(heartbeat_task, "heartbeat_task", 4096, NULL, 3, NULL);
@@ -353,4 +369,60 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_vfs_eventfd_register(&eventfd_config));
     xTaskCreate(ot_task_worker, "ot_cli_main", 10240, xTaskGetCurrentTaskHandle(), 5, NULL);
+}
+
+// LED timer callback to turn off the LED
+void led_timer_callback(TimerHandle_t timer) {
+    led_strip_clear(led_strip);
+    led_strip_refresh(led_strip);
+}
+
+// Initialize the RGB LED
+void led_init(void) {
+    // LED strip configuration
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = 8,   // GPIO number for the LED
+        .max_leds = 1,         // Number of LEDs in the strip
+        .led_pixel_format = LED_PIXEL_FORMAT_GRB, // RGB LED
+        .led_model = LED_MODEL_WS2812,
+    };
+
+    // LED strip backend configuration
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = 10 * 1000 * 1000, // 10MHz
+        .flags.with_dma = false,
+    };
+
+    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
+
+    // Create LED timer if not already created
+    if (led_timer == NULL) {
+        led_timer = xTimerCreate(
+            "LED Timer",
+            pdMS_TO_TICKS(1100), // 1.1 seconds
+            pdFALSE,            // Auto-reload disabled
+            NULL,               // Timer ID not used
+            led_timer_callback  // Timer callback function
+        );
+        if (led_timer == NULL) {
+            ESP_LOGE(TAG, "Failed to create LED timer");
+        }
+    }
+
+    // Clear LED strip initially
+    led_strip_clear(led_strip);
+    led_strip_refresh(led_strip);
+}
+
+// Function to handle LED on heartbeat
+void handle_heartbeat_led(void) {
+    // Set LED to red
+    led_strip_set_pixel(led_strip, 0, 255, 0, 0); // Red color (RGB: 255, 0, 0)
+    led_strip_refresh(led_strip);
+
+    // Reset and start the timer
+    if (led_timer != NULL) {
+        xTimerReset(led_timer, 0);
+    }
 }
