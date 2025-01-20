@@ -67,7 +67,7 @@ static led_strip_handle_t led_strip;
 static TimerHandle_t led_timer = NULL;
 
 #define TAG "ot_esp_cli"
-#define HEARTBEAT_DURATION_MS 500  // Configurable heartbeat duration in milliseconds
+#define HEARTBEAT_DURATION_MS 20  // Configurable heartbeat duration in milliseconds
 
 static otUdpSocket sHeartbeatSocket;
 
@@ -245,7 +245,7 @@ void heartbeat_task(void *arg)
 {
     otInstance *instance = esp_openthread_get_instance();
     TickType_t last_press_time = 0;
-    const TickType_t debounce_interval = pdMS_TO_TICKS(500);
+    const TickType_t debounce_interval = pdMS_TO_TICKS(HEARTBEAT_DURATION_MS);
 
     while (1) {
         // Debounce button press
