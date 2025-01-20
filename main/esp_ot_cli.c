@@ -93,37 +93,17 @@ void udp_receive_callback(void *aContext, otMessage *aMessage, const otMessageIn
         return;
     }
 
-    char buf[128] = {0};  // Ensure null termination
-    uint16_t read_len = length - offset;
+    char buf[59] = {0};  // 58 bytes + null terminator
     
-    if (read_len >= sizeof(buf)) {
-        ESP_LOGW(TAG, "Received message too long (%d bytes), truncating to %d", read_len, sizeof(buf) - 1);
-        read_len = sizeof(buf) - 1;  // Leave room for null terminator
+    // We know the message is exactly 58 bytes
+    otError error = otMessageRead(aMessage, offset, buf, 0);
+    if (error != OT_ERROR_NONE) {
+        ESP_LOGE(TAG, "Failed to read message: %s (%d)", 
+                 otThreadErrorToString(error), error);
+        return;
     }
 
-    // Read the message in chunks
-    uint16_t bytes_read = 0;
-    uint16_t chunk_size = 16; // Read in smaller chunks
-    
-    while (bytes_read < read_len) {
-        uint16_t to_read = (read_len - bytes_read) < chunk_size ? 
-                          (read_len - bytes_read) : chunk_size;
-                          
-        otError error = otMessageRead(aMessage, 
-                                    offset + bytes_read, 
-                                    buf + bytes_read, 
-                                    to_read);
-                                    
-        if (error != OT_ERROR_NONE) {
-            ESP_LOGE(TAG, "Failed to read chunk at offset %d: %s (%d)", 
-                     bytes_read, otThreadErrorToString(error), error);
-            return;
-        }
-        
-        bytes_read += to_read;
-    }
-
-    buf[bytes_read] = '\0';  // Ensure null termination
+    buf[58] = '\0';  // Ensure null termination
     ESP_LOGI(TAG, "Received UDP message: %s", buf);
     
     // Trigger LED on heartbeat message
