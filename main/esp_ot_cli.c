@@ -67,6 +67,7 @@ static led_strip_handle_t led_strip;
 static TimerHandle_t led_timer = NULL;
 
 #define TAG "ot_esp_cli"
+#define HEARTBEAT_DURATION_MS 500  // Configurable heartbeat duration in milliseconds
 
 static otUdpSocket sHeartbeatSocket;
 
@@ -257,8 +258,8 @@ void heartbeat_task(void *arg)
                 esp_openthread_lock_release();
             }
 
-            // Send once per second
-            vTaskDelay(pdMS_TO_TICKS(1000));
+            // Send once per configured duration
+            vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_DURATION_MS));
         } else {
             // Not pressed
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -380,7 +381,7 @@ void led_init(void) {
     if (led_timer == NULL) {
         led_timer = xTimerCreate(
             "LED Timer",
-            pdMS_TO_TICKS(1100), // 1.1 seconds
+            pdMS_TO_TICKS(HEARTBEAT_DURATION_MS * 1.1), // 1.1 times the heartbeat duration
             pdFALSE,            // Auto-reload disabled
             NULL,               // Timer ID not used
             led_timer_callback  // Timer callback function
